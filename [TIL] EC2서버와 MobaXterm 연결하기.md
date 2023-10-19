@@ -1,4 +1,4 @@
-원본 게시글 https://velog.io/@deaf52/AWS-EC2%EC%84%9C%EB%B2%84%EC%99%80-MobaXterm%EC%97%B0%EA%B2%B0%ED%95%98%EA%B8%B0
+- 원본 게시글 https://velog.io/@deaf52/AWS-EC2%EC%84%9C%EB%B2%84%EC%99%80-MobaXterm%EC%97%B0%EA%B2%B0%ED%95%98%EA%B8%B0
 DB이중화를 위해 EC2서버를 열어 MySQL 설치까지 버벅거리며 수행했으나
 EC2서버 콘솔이 답답하다 느껴져서 기존에 사용해봤던 `MobaXterm`과 연결하여 사용해보려 한다.
 
