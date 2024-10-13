@@ -1105,3 +1105,224 @@ db.order_no.find()
 ```
 
 - 99p까지 실습 완료
+
+### Aggregate 문법 및 함수(미실습)
+- $group 안의 다큐먼트에서 $first, $last : 그룹내의 첫번째/마지막 값
+ 
+- $addToSet : 그룹별로 지정하는 인자 배열에 삽입
+```bash
+  db.employees.aggregate({
+      $group : {
+      {_id : "$deptno",
+              enames : {$addToSet : "$ename"}}
+      }
+  })
+```
+  
+- $match : rdbms의 where/having
+- $sort : rdbms의 order by
+- $project : rdbms의 select
+- $limit : 출력 목록 제한
+- $skip : 출력 목록 스킵할 preset 지정
+- { \$cond : \[조건식 혹은 값, true, false\] \} : 삼항연산자처럼 사용하는 함수. 조건식이 아닌 값일 경우 null 체크.
+{if:~,then:~,else~}로도 사용
+- { \$ifNull : \["$field", value] } : 값이 null일 경우 value, null이 아니면 값
+- 날짜조작함수
+  - $year
+  - $month
+  - $week
+  - $hour
+  - $minute
+  - $second
+  - $dayOfYear : 년 중 몇번째 날인지
+  - $dayOfMonth : 월 중 몇번째 날인지. (\$day는 없음)
+  - $dayOfWeek : 요일(일요일이 1)
+</br>  
+- $redact : 배열에서 조건 검색하는 연산자
+  - $$descend : 조건을 만족하는 데이터만 검색
+  - $$keep : 모든 데이터를 검색
+```bash
+db.books.aggregate([
+  { $match : {author: "주종면"}},
+  { $redact : {
+			$cond: {
+				if : { $gt : [{ $size : {$setIntersection: ["$tags", tagAccess]}}, 0]
+				, then : "$$DESCEND"
+				, else : "$$PRUNE"
+			}
+		}}
+])
+```
+
+- $replaceWith : 명시하는 문서로 대체
+- $set : 결과에 추가적으로 필드 추가
+
+
+# MapReduce기능
+- 구글에서 빅데이터의 처리와 집합을 위해 만들어짐
+  - 여러개의 노드에서 병렬처리 방식으로 처리함
+  - Map과 Reduce함수 만으로 병렬 프로그래밍 가능
+```bash
+# mapReduce 문법 구조
+db.collection_name.mapReduce(
+	<map>, # map 함수 이름 (분석 대상 필드 정의)
+    <reduce>, # reduce 함수 이름 (분석 및 통계작업 수행 함수)
+    {
+    	<out>, # 결과를 저장할 collection명
+        <query>, # 검색조건
+        <sort>, # sort조건
+        <limit>, # 출력수 제한
+        <finalize>, # 실행결과를 집계할 함수
+        <scope>,
+        <jsMode>,
+        <verbose>
+    }
+)
+```
+- 함수 예시
+```js
+// 맵함수
+var map_function = function() {
+  emit(this.cust_id, this.price);
+}
+//리듀스 함수
+var reduce_function = function(keyCustId, valuesPrices){
+  return Array.sum(valuesPrices); 
+}
+// 맵함수와 리듀스 함수를 이용하여 order_cust_total 컬렉션에 저장
+db.order.mapReduce(
+  map_function,
+  reduce_function,
+  {out:"order_cust_total"}
+  )
+
+//finalize 함수
+var finalize_function = function(key, reducedValue) {
+  reducedValue.average = reducedValue.qty/reducedValue.count;
+  return reducedValue;
+}
+```
+
+### SQL문과 MapReduce 비교
+| 구분  | aggregate  | MapReduce  | Group |
+|------|------|------|------|
+| 설명 | pipeline연산자 제공 | 1. 대용량 데이터 처리를 위한 map, reduce</br>2. 복잡한 추출을 위해 여러 그룹핑 함수 사용| Aggregate보다 성능 떨어짐,</br> MapReduce보다 문법이 구조적이지 않음 |
+| 결과출력 | Bson타입의 inline Result로</br> 출력되며 크기가 제한된다. | 다양한 방식으로 출력 가능 | 배열 형태의 Inline Result로 출력 |
+| Sharding | Sharded & Non Sharded</br>input Collection 지원 | aggregate와 동일 | Sharded input Collection 미지원 |
+| 기타 | - | v2.4 이전 버전에서</br> Single Thread로 실행됨 | MapReduce와 동일 |
+
+### JavaScript 함수
+```js
+> db.system.js.save({_id: "calculate_function", value:function(x,y,z){return x+y+z;}})
+> db.eval("calculate_function(10,20,3)")
+70
+```
+- 자주쓰는 함수를 db에 저장해둘 수 있음(Stored Function, Anonymous Function)과 유사
+
+### Lock정책
+- 지원되는 락 수준 (상세 https://blog.naver.com/tpgpfkwkem0/222293841911)
+  - Global Lock
+  - Database Lock(v2.2)
+  - Collection Lock(v3.2)
+  - Document Lock(v3.2)
+  - Multi-Document Lock(v4.0)
+- Lock으로 인한 성능 저하를 막기 위한 PageFaultException 기능 제공
+- 일반적으로 RDBMS는 Read Committed 수준의 Isolation 레벨을 제공하지만,
+MongoDB의 경우 빅데이터의 원활한 처리를 위해 Read Uncommitted수준을 기본적으로 제공한다.
+
+#### Multi-Document Transaction (MTDT)
+- ~v4.0까진 ReplicaSets, v4.2부터는 Shard-Cluster 환경에서도 지원
+- 여러 작업, Collection, DB에 적용할 수 있음. 이 때 배타 락이 설정되며 원자성을 가진다.
+- Embedded Document, Array구조와 같은 single-document transaction에 비해 성능부하가 있음
+- FCV4.0 이상부터 사용가능하며 wiredTiger, In-Memory 저장엔진에만 사용할 수 있음
+- config, admin, local DB 콜렉션 읽기/쓰기 할 수 없고 system.* 컬렉션은 쓰기 작업 불가. 다중 트랜잭션이 진행중인 Collection은 인덱스를 추가/삭제할 수 없음
+- 트랜잭션의 총 크기가 16MB이상이여도 Oplog에 충분한 공간을 할당하여 처리 가능
+- 트랜잭션을 진행하기 전에 write concern의 majority를 설정하는 것이 권장됨
+- WiredTiger인 Primary Server와 In-memory인 Secondary Server 환경에서도 트랜잭션 지원
+</br>
+- MTDT를 사용할 수 있는 Aggregation Framework 관련 문법
+  - db.coll.aggregate
+    - $collStats, $currentOp, $indexStats, $listLocalSessions, $listSessions, $out
+  - db.coll.distinct
+  - db.coll.find
+  - db.coll.geoSearch
+  - db.coll.deleteOne/Many
+  - db.coll.insertOne/Many
+  - db.findOneAndUpdate(Replace, Delete)
+  - db.coll.bulkWrite
+
+### Read/Write Concern
+- 일관성 보장을 위한 트랜잭션 제어방법
+- Lock 발생 시 기본 5millisecond 대기하며 Lock을 획득하지 못할 시 트랜잭션이 취소됨
+```
+// 최초 트랜잭션을 시작할 때 실행하는 메소드
+session.startTransaction({
+	readConcern:{level:<level>},
+    writeConcern:{w: <value>,
+    	j:<boolean>,
+        wtimeout:<number>}
+});
+```
+- ReadConcern Option절에 대한 설명
+<table>
+  <tr>
+    <th colspan="2" align="center">ReadConcern</th>
+  </tr>
+  <tr>
+    <th>Majority</th>
+    <td>committed된 데이터에 대한 읽기작업 보장되지 않음</td>
+  </tr>
+  <tr>
+    <th>Local</th>
+    <td>committed된 데이터에 대한 읽기작업 보장되지 않음</td>
+  </tr>
+  <tr>
+    <th>Snapshot</th>
+    <td>MTDT에서만 사용 가능. committed된 데이터에 대해 읽기 작업 보장되지 않음</td>
+  </tr>
+</table>
+
+- WriteConcern Option절에 대한 설명
+<table>
+  <tr>
+    <th colspan="2" align="center">WriteConcern</th>
+  </tr>
+  <tr>
+    <th>Majority</th>
+    <td>committed된 데이터에 대한 읽기/쓰기작업 보장됨</td>
+  </tr>
+  <tr>
+    <th>1</th>
+    <td>Failover가 발생하는 경우 Rollback 수행</td>
+  </tr>
+</table>
+</br>
+- MTDT 관련 환경설정 파라미터
+  - 1) `mongod -setParameter "maxTransactionLockRequestTimeoutMillis=5"`
+    - Lock을 획득하기위해 대기해야하는 시간 설정
+    - 0:즉시중단, -1:작업 특정 시간 초과</br>
+  - 2) `mongod -setParameter "transactionLifetimeLimitSeconds=60"`
+    - MTDT의 수명 결정. 해당 시간 내에 트랜잭션이 완료되어야됨
+</br>
+- Lock을 보유하고있으면서 비활성 세션을 필터링하는 구문
+  - `db.aggregate([{$currentOp : {allUsers:true, idleSessions:true}}, {$match : {active : false, txnNumber : {$exists:true}}}])`
+  
+### Snapshot & Committed Data
+- MongoDB v4.0의 최대 장점 중 하나는 MTDT
+  - 빅데이터의 빠른 R/W이 목적인 시스템에서 트랜잭션을 제어할 수 있음
+- MongoDB는 MTDT를 통해 트랜잭션을 제어하기 위해 변경 전 데이터를 임시로 저장해 둘 스냅샷(SnapShot or Rollback) 데이터를 위한 별도의 저장 구조를 제공 ; **Rollback File**
+
+### Rollback File
+1) Primary 서버의 장애 조치 후 ReplicaSets에 다시 참여할 때 기존 쓰기 작업은 모두 롤백됨
+2) 롤백은 Secondary 서버가 성공적으로 복제하지 못한 경우에만 제한적으로 허용됨.(각 멤버간 일관성 유지를 위해)
+3) Primary 서버에 장애가 발생하기 전 Secondary 서버에 성공적으로 복제될 경우 롤백하지 않음
+- Rollback file : `/<dbpath>/rollback` 경로에 생성 ( `<db-name>.<collection>.<timestamp>.bson` )
+</br>
+- Mongod.exe를 구동할 때 Rollback File이 생성되게 하는 구문
+  - `mongod -setParameter "createRollbackDataFiles=true`</br>혹은
+  - `db.adminCommand({setParameter:1, createRollbackDataFiles=true})`
+- 복제 작업이 실패할 경우 롤백 데이터의 수명 결정 가능. 최대값은 2147483647(68년 정도)
+  - `mongod -setParameter "rollbackTimeLimitSecs=1800`</br>혹은
+  - `db.adminCommand({setParameter: 1, rollbackTimeLimitSecs : 1800})`
+</br>
+- 2장 끝
