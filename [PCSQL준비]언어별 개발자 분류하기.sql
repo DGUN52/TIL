@@ -1,0 +1,21 @@
+-- https://school.programmers.co.kr/learn/courses/30/lessons/276036
+WITH FRONT AS (
+    SELECT SUM(CODE) FE_CODE FROM SKILLCODES WHERE CATEGORY = 'Front End'
+)
+SELECT 
+    *
+FROM (
+    SELECT 
+        CASE
+            WHEN SKILL_CODE & (SELECT FE_CODE FROM FRONT) > 0 AND SKILL_CODE & (SELECT CODE FROM SKILLCODES WHERE NAME = 'Python') THEN 'A'
+            WHEN SKILL_CODE & (SELECT CODE FROM SKILLCODES WHERE NAME = 'C#') THEN 'B'
+            WHEN SKILL_CODE & (SELECT FE_CODE FROM FRONT) > 0 THEN 'C'
+        END GRADE
+        , ID
+        , EMAIL
+    FROM 
+        DEVELOPERS
+) A
+WHERE GRADE IS NOT NULL
+ORDER BY GRADE, ID
+;
