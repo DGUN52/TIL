@@ -1,0 +1,35 @@
+-- https://school.programmers.co.kr/learn/courses/30/lessons/151141
+
+WITH DCRATE AS(
+    SELECT 
+        SUBSTRING(
+            DURATION_TYPE
+            , 1
+            , INSTR(DURATION_TYPE, '일')-1
+        ) DURATION
+        , CAR_TYPE
+        , DISCOUNT_RATE
+    FROM 
+        CAR_RENTAL_COMPANY_DISCOUNT_PLAN
+    WHERE
+        CAR_TYPE = '트럭'
+)
+SELECT
+    HISTORY_ID
+    , ROUND(
+        (DATEDIFF(END_DATE, START_DATE) + 1)
+         * DAILY_FEE
+         * (100 - MAX(IFNULL(DISCOUNT_RATE, 0))) / 100
+    ) FEE
+FROM
+    CAR_RENTAL_COMPANY_RENTAL_HISTORY H 
+    JOIN CAR_RENTAL_COMPANY_CAR C USING(CAR_ID)
+    LEFT JOIN DCRATE D ON DATEDIFF(END_DATE, START_DATE) + 1 >= DURATION
+WHERE
+    C.CAR_TYPE = '트럭'
+GROUP BY
+    HISTORY_ID
+ORDER BY
+    FEE DESC
+    , HISTORY_ID DESC
+;
