@@ -1,0 +1,28 @@
+-- https://school.programmers.co.kr/learn/courses/30/lessons/131124
+WITH RNK1 AS (
+    SELECT *
+    FROM (
+        SELECT
+            MEMBER_ID
+            , RANK() OVER(ORDER BY COUNT(*) DESC) RNK
+        FROM
+            REST_REVIEW R
+        GROUP BY
+            MEMBER_ID
+    ) T
+    WHERE RNK=1
+)
+
+SELECT 
+    MEMBER_NAME
+    , REVIEW_TEXT
+    , TRIM(REVIEW_DATE) REVIEW_DATE
+FROM
+    MEMBER_PROFILE M
+    JOIN REST_REVIEW R USING(MEMBER_ID)
+WHERE
+    EXISTS (SELECT 1 FROM RNK1 WHERE M.MEMBER_ID = RNK1.MEMBER_ID)
+ORDER BY
+    REVIEW_DATE
+    , REVIEW_TEXT
+;

@@ -1,0 +1,21 @@
+-- https://school.programmers.co.kr/learn/courses/30/lessons/131532
+
+SELECT
+    YEAR(SALES_DATE) YEAR
+    , MONTH(SALES_DATE) MONTH
+    , GENDER
+    , COUNT(DISTINCT USER_ID) USERS
+FROM
+    USER_INFO U
+    JOIN ONLINE_SALE O USING(USER_ID)
+WHERE
+    GENDER IS NOT NULL
+GROUP BY
+    YEAR(SALES_DATE)
+    , MONTH(SALES_DATE)
+    , GENDER
+ORDER BY
+    1
+    , 2
+    , 3
+;
