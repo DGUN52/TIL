@@ -185,7 +185,174 @@ DISK IO때문
 
 ## 2.1 인덱스 구조 및 탐색
 
-## 2.1.1 미리 보는 인덱스 튜닝
+인덱스 탐색은 수직적 탐색, 수평적 탐색으로 이루어짐
+
+### 2.1.1 미리 보는 인덱스 튜닝
+
+SQL튜닝은 랜덤I/O를 줄이는 것이 목표이다.
+
+### 2.1.2 인덱스 구조
+
+- B* tree 인덱스 - 루트 블록 - 브랜치 블록 - 리프 블록
+- LMC = left most child, 인덱스 가장 좌측의 데이터
 
 
-> 250208(토) 69p ~ p
+- ROWID = 데이터 블록 주소 + 로우 번호
+- DBA (data block address) = 데이터 파일 번호 + 블록 번호
+- 블록 번호 : 데이터파일 내에서 부여된 순번
+- 로우 번호 : 블록 내 순번
+
+
+### 2.1.3 인덱스 수직 탐색
+- 인덱스 스캔 시작 지점을 탐색
+- 리프블록부터 다음 과정을 거친다.
+  - 찾는 데이터보다 인덱스데이터가 크다면 좌측, 찾는 데이터가 더 크다면 우측으로 이동
+  - 찾는 데이터와 인덱스 데이터가 일치하면, 일치하는 인덱스의 바로 전 데이터가 가리키는 블록으로 이동하여 탐색 시작
+  
+### 2.1.4 인덱스 수평 탐색
+- 인덱스의 리프 블록에서 스캔 시작 지점을 찾았으면 만족하지 않는 값이 나올 때 까지 탐색 시작(데이터 탐색)
+  - 탐색해서 얻은 ROWID로 테이블에 액세스
+  
+### 2.1.5 결합 인덱스 구조와 탐색
+- 결합 인덱스의 순서를 바꾸어도 **=** 조건일 경우에는 읽는 블록 수가 같다.
+- B* Tree에서 인덱스 트리의 높이는 균일하다. (Balanced)
+
+
+## 2.2 인덱스 기본 사용법
+
+- index range scan
+
+### 2.2.1 인덱스를 사용한다는 것
+
+- 인덱스 선두 컬럼을 가공하지 않아야 인덱스를 정상적으로 사용할 수 있다.
+  - 정상적 사용 : 인덱스 리프 블록의 일부만 있는 index range scan
+  - 인덱스 선두 컬럼이 가공될 경우 : 인덱스 시작점, 끝점을 파악할 수 없음
+    - 인덱스 리프 블록 전체 스캔(index full scan) 수행
+
+```sql
+ex)
+where substr(bday, 5, 2) = '05'
+where nvl(주문수량, 0) < 100
+where 업체명 like '%대한%'
+where A=10 or B='abcd'
+```
+
+- OR Expansion : or 조건식을 union all로 처리해 index range scan을 사용하게 하는 옵티마이저 기법 (`/*+ use concat*/` 사용)
+- IN-List Iterator : in 조건식의 개수만큼 index range scan 반복
+
+
+### 2.2.3 더 중요한 인덱스 사용 조건
+
+- 인덱스 컬럼이 가공된 경우 필터링 역할을 수행하지 못한다.
+- SQL 튜닝은 총 읽는 수 자체를 줄여야함
+
+### 2.2.4 인덱스를 이용한 소트 연산 생략
+
+- order by 컬럼이 인덱스 컬럼에 포함 될 경우 소트 연산이 생략된다.
+
+### 2.2.5 order by 절에서 컬럼 가공
+
+- order by/ select 절에서 컬럼을 가공하여 인덱스를 사용하지 못할 수 있다.
+```sql
+아래와 같은 경우 sort 생략 불가
+select TO_CHAR(주문번호, ~)
+from A
+~
+order by A
+
+이 경우 TO_CHAR로 가공된 데이터에 대해  정렬을 수행하므로 소트 생략 불가
+```
+
+### 2.2.6 SELECT - LIST 에서 컬럼 가공
+```sql
+-- sort 생략 불가 (데이터형 변경한 후 MAX값 찾음)
+SELECT MAX(TO_NUMBER(변경순번))
+
+-- sort 생략 가능
+SELECT TO_NUMBER(MAX(변경순번))
+```
+
+### 2.2.7 자동 형변환
+```sql
+SELECT * FROM 고객
+WHERE 생년월일 = 19870605
+```
+위 쿼리는 `생년월일` 컬럼을 숫자로 자동 형변환하여 사용하기 때문에 INDEX RANGE SCAN 불가
+`기념일 LIKE '%1987&'` 이 경우 `기념일` 컬럼이 문자형으로 자동 변환됨
+
+등 자동 형변환에 의해 여러 품질저하를 일으킬 수 있다.
+
+
+
+## 2.3 인덱스 확장기능 사용법
+
+### 2.3.1 Index Range Scan
+- 수직 탐색 후 필요한 만큼만 수평탐색
+
+
+### 2.3.2 Index Full Scan
+- 수직탐색 없이 Index 리프 블록 전체 스캔
+
+```sql
+create index emp_x01 on emp (ename, sal);
+
+select * from emp
+where sal > 2000
+;
+```
+위 경우에 index full scan 발생
+
+index full scan이라도 소량의 데이터만 원하는 경우 full scan보다 유리
+대량의 데이터가 해당되는 경우 Table Full Scan보다 불리
+
+
+### 2.3.3 Index Unique Scan
+- 수직 탐색만으로 데이터 스캔
+  - Unique 인덱스를 = 조건으로 탐색할 경우
+- unique 인덱스라도 범위조건으로 검색할 경우 Index Range Scan 발생
+
+
+### 2.3.4 Index Skip Scan
+```sql
+-- 인덱스 구성 (성별, 연봉)
+select /*+ index_ss(emp emp_idx) */ col_a
+from emp
+where 연봉 between 2000 and 4000
+...
+```
+- 오라클 9i에 도입
+- 선두 컬럼의 고유값이 적고(성별) 후행 컬럼의 고유값(연봉)이 많을 경우 유용
+
+
+- 선두 컬럼들이 쿼리에 없을 때도 사용 가능
+
+- 선두 컬럼들이 범위검색(부등호, between, like)일 때도 사용 가능
+
+
+### 2.3.5 Index Fast Full Scan
+```sql
+select /*+ index_ffs(emp emp_idx) */
+```
+- 인덱스 전체를 Multiblock IO방식으로 스캔
+  - 물리적 순서대로 스캔 (index full scan 은 논리적 순서대로 스캔)
+- 결과집합이 키에 따라 정렬되지 않음
+- 쿼리에 사용된 컬럼이 모두 인덱스에 포함돼있어야함
+- 인덱스가 파티션돼있지 않아도 병렬쿼리가 가능(Direct Path IO 사용됨)
+
+
+### 2.3.6 Index Range Scan Descending
+- Index Range Scan을 내림차순 실행함
+- order by ~ desc절이 있을 때, MAX(col_a) 항목이 있을 때 발생됨
+
+
+
+> 250209(일) 69p ~ 125p
+
+
+# 3. 인덱스 튜닝
+
+## 3.1 테이블 액세스 최소화
+
+
+
+> 250210(월) 129p ~ p
