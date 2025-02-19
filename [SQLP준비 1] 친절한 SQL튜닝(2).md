@@ -167,14 +167,16 @@ NL조인과 달리 인덱스 유무의 영향을 받지 않는다.
 
 ## 4.3 해시 조인
 
-`소트 머지 조인`과 `해시조인`은 인덱스를 이용하지 않음
+`소트 머지 조인`과 `해시조인`은 인덱스가 필수적이지 않음
 → 대량 데이터 조인에 NL조인보다 빠르고, 일정한 성능을 보임 
 
 해시조인은 테이블을 정렬하는 부하도 없음
 
 ### 4.3.1 기본 메커니즘
 
-마찬가지로 두 단계로 진행됨
+다른 조인과 마찬가지로 두 단계로 진행됨
+(NL 조인 → outer에서 해당하는 로우를 찾고, inner에서 해당하는 로우를 건건히 찾음 (2중반복문)
+소트머지조인 → 소트 단계; 조인 컬럼 기준으로 양쪾 테이블 정렬, 머지 단계; 정렬한 집합을 병합)
 
 1. Build 단계
    - 작은 쪽 테이블 (Build Input)을 읽어 헤시 테이블(해시 맵)을 생성한다.
@@ -244,7 +246,7 @@ select /*+ leading(a) use_hash(b) swap_join_inputs(b) */
   3. 해시조인이 불가능 할 때 (`=`조건으로 조인하지 않을 때) → 소트 머지 조인
 
 
-- 대량 : NL조인 기준으로 최적화했음에도 랜덤 액세스가 많고 성능이 문제라면 대량
+- 대량의 기준 : NL조인 기준으로 최적화했음에도 랜덤 액세스가 많고 성능이 문제라면 대량
 
 - 해시조인이 매우 빠른 경우가 아니라면 NL조인이 바람직하다.
 
@@ -273,7 +275,7 @@ select /*+ leading(a) use_hash(b) swap_join_inputs(b) */
 
 - exists에 사용한 서브쿼리문에 `/*+ no_unnest */` 기술하면 서브쿼리를 풀어내지 않음으로써 필터링을 위해 사용할 수 있다.
 
-- NL조인과 다른점
+- NL조인과 필터 작동이 다른점
   - 스킵기능; 메인쿼리와 서브쿼리와 조인된 후에는 break; 서브쿼리의 다음을 계속 이행하지 않고, 메인쿼리의 다음 로우를 처리한다.
   - 캐싱기능; 서브쿼리에 입력하는 값에 따른 결과값을 캐싱하여 반복된 값에 대한 답을 바로 도출
 
@@ -293,14 +295,26 @@ unnesting되면 `필터` 방식을 사용할순 없지만
 이 외에도 다양한 기법이 활용될 수 있다는 장점
 
 ```sql
--- 서브쿼리를 메인쿼리보다 먼저 처리함
+-- 서브쿼리를 메인쿼리보다 먼저 처리하게 힌트 기술
 select /*+ leading(거래@subq) use_nl(c)*/ *
 from table_c c
 where exists (
-	select ~
+	select /*+ qb_name(subq) unnest */ 'x'
     from 거래
     where c.col_a = 거래.col_a
     	and ~
+)
+
+
+-- unnset 후 hash 세미조인으로 처리하게 기술
+
+select ~
+from ~
+where exists (
+	select /*+ unnest hash_sj */ 'x'
+    from ~
+    where <조인문>
+    	~
 )
 ```
 
@@ -319,7 +333,8 @@ rownum 조건은 여러 힌트를 작동하지 못하게함 (unnest 등)
   필터링을 먼저 하여 조인되는 양을 줄일 수 있다면 좋은 경우
 
 
-- `서브쿼리 Pushing` : 서브쿼리를 실행계획 안쪽으로 밀어넣음. 먼저 처리되게함. 힌트 : `push_subq`
+- 서브쿼리 Pushing : 서브쿼리를 실행계획 안쪽으로 밀어넣음. 먼저 처리되게함. 
+힌트 : `select /*+ no_unnest push_subq */ col_a, col_b`
   - **unnest되지 않은 서브쿼리에만 작동함**. 따라서 `no_unnest`와 같이 사용하는 것이 바람직
   
 
@@ -330,7 +345,8 @@ rownum 조건은 여러 힌트를 작동하지 못하게함 (unnest 등)
 
 - 311p 뷰와 조인하는 쿼리
   - 뷰 밖에선 전월 데이터만 읽는데, 뷰는 이미 모든 데이터를 읽는다.
-  → `merge` 힌트를 이용해 메인 쿼리와 합침. @ 이 때 변하는 실행계획 **확인하기** @
+  → `select /*+ merge */` 힌트를 이용해 메인 쿼리와 합침. 
+  @ 이 때 변하는 실행계획 **확인하기** @
   
   - merge하여 수정된 내용으론 `nl join`방식을 사용하여 비효율은 줄었지만,
   전체를 group by 한 후 출력할 수 있기 때문에 부분범위 처리는 불가능하다.
@@ -339,14 +355,14 @@ rownum 조건은 여러 힌트를 작동하지 못하게함 (unnest 등)
 #### 조인 조건 pushdown
 
 메인 쿼리의 조인 조건절 값을 뷰 안으로 밀어넣음
-힌트 : `push_pred`
+힌트 : `select /*+ no_merge push_pred */ col_a, col_b`
 
 위 힌트를 써서 실행계획에 `VIEW PUSHED PREDICATE`가 발생한다면
 기술된 쿼리의 같은 경우 당월 거래 데이터만 조회하고, 중간에 멈출 수도 있다. (부분범위 처리가 가능하다)
 
-실행계획만 보면 고객데이터와 별개로 group by까지 수행한 것으로 보일 수 있지만,
+실행계획만 보면 고객데이터와 조인하기 전에 group by까지 수행한다.
 조인조건이 pushdown됐으므로 `group by 조인조건`을 수행하여 부분범위처리가 가능한 것
-`push down predicate` 라는 실행계획에 주의
+`push down predicate` 라는 실행계획에 유의
 
 
 - `Lateral`, `Outer apply`, `Cross Apply` 구문으로 인라인 뷰를 대체하면, 인라인 뷰에서 다른 테이블의 컬럼을 참조하고 조인할 수 있다. 
@@ -356,4 +372,207 @@ rownum 조건은 여러 힌트를 작동하지 못하게함 (unnest 등)
 
 ### 4.4.4 스칼라 서브쿼리 조인
 
-> 250219(수) 317p ~ p
+#### (1) 스칼라 서브쿼리의 특징
+
+- PLSQL함수를 만들어서 select절에 사용하면 메인쿼리 건수만큼 '재귀적으로' 반복 실행됨
+- 반면 스칼라 서브쿼리로 사용하면, 반복실행된다는 것은 맞지만 함수처럼 CTS를 유발하진 않음
+  - 아래 sql은 아우터 조인처럼 수행된다는 것
+
+```sql
+select a, b, c, d
+	, (select name from dept where dept.deptno = emp.deptno) dname
+from emp
+where ~
+
+-- 위 쿼리는 아래처럼 아우터 조인처럼 수행됨
+
+
+select /*+ ordered use_nl(d) */ a, b, c, d, dname
+from emp, dept
+where dept.deptno(+) = e.deptno
+	and ~
+```
+
+차이점은 스칼라 서브쿼리는 캐싱 작용이 일어남.
+
+
+#### (2) 스칼라 서브쿼리 캐싱 효과
+
+스칼라 서브쿼리로 조인 시 입출력값이 캐싱됨
+- 입력값 > 서브쿼리에서 참조하는 메인쿼리의 컬럼 값(조인컬럼)
+
+이 캐싱효과를 이용하여 PLSQL함수에다 스칼라 쿼리를 덧씌워서 캐싱효과를 이끌어낼 수 있다.
+ex) `select a, b, (select get_dname(emp.deptno) from dual) from emp where ~`
+
+
+#### (3) 스칼라 서브쿼리 캐싱 부작용
+
+반대로 입력값의 범위가 넓어서 캐싱효과를 거의 받지 못한다면 오히려 캐싱 확인으로 인한 부하만 증가한다.
+
+또, 메인쿼리 집합의 크기가 작으면 캐시 재사용성이 떨어져서 성능에 악영향(캐시 영역에 저장만 하고 이용 X)
+
+
+#### (4) 두 개 이상의 값 반환
+
+스칼라 서브쿼리에서 여러 값을 뽑아내고 싶을 때
+
+1. 스칼라 서브쿼리를 여러개 쓴다 → 비효율
+
+2. 문자열 결합연산자를 이용해 묶어서 출력한 뒤 substring으로 빼낸다 → 비효율
+
+3. OBJECT TYPE 사용 → 번거로움
+
+4. 스칼라 서브쿼리 대신 인라인 뷰를 이용한다.
+→ 인덱스 비효율이 있거나(no_merge), group by등으로 부분범위 불가(merge)등의 문제
+→ 이럴 때 push_pred(조인 조건 푸시다운)이 유용
+
+
+#### (5) 스칼라 서브쿼리 unnesting
+
+스칼라 서브쿼리는 NL방식으로 조인되므로 캐싱효과가 미미하다면 랜덤IO 부담이 있다.
+병렬 쿼리에선 특히 스칼라 서브쿼리를 사용하지 않아야함
+대량 데이터를 처리하는 병렬 쿼리는 해시 조인으로 처리해야 효과적이기 때문
+→ 서브쿼리 unnesting
+
+unnesting되면 해시조인으로 처리 가능함
+
+
+# 5장 소트 튜닝
+
+## 5.1 소트 연산에 대한 이해
+
+소팅, 해싱, 그룹핑에 PGA/Temp Tablespace를 사용함
+
+
+### 5.1.1 소트 수행 과정
+
+소팅 : 크기에 따라 두가지로 나뉨 - 메모리 / 디스크
+
+- 디스크 소팅 과정
+  - SGA 버퍼캐시 → PGA의 Sort Area → 양이 많을 경우 정렬된 중간집합은 Temp Tablespace에 저장(Sort run) → 반복
+  - 정렬이 완료되면 템프 테이블스페이스의 소트 런들을 Merge (정렬된 순서대로 클라이언트로 전달)
+
+→ 소팅은 메모리, CPU 부하를 일으키고, 양이 많으면 DISK IO까지 발생
+부분 범위 처리도 할 수 없음.
+피할 수 있으면 피하고, 피할 수 없다면 최대한 인메모리 소팅으로 진행되게 유도해야함
+
+
+### 5.1.2 소트 오퍼레이션
+
+소트를 발생시키는 오퍼레이션(실행계획)
+
+#### (1) Sort Aggregate
+- 전체 로우 대상으로 집계 수행 할 때 등장 (소팅은 아님)
+
+실제로 정렬을 하진 않고 수학적 연산 수행(min max sum avg 등)
+\> `sum` `count` `min` `max` 를 두고 값을 읽을 때마다 갱신해가는 연산과정 
+→ 큰 sort area가 필요하지 않다. 
+
+#### (2) sort order by
+- 데이터 정렬 수행
+
+
+5.1.1의 그림과 같은 과정 수행
+
+
+#### (3) sort group by
+- 그룹별 집계 수행
+
+
+(1)처럼 갱신연산을 그룹마다 수행.
+마찬가지로 큰 sort area가 필요하지 않다. (temp tablespace도 필요 없음)
+
+
+- `hash group by`
+: group by 절 후에 order by 절이 없으면 대부분 hash gorup by로 처리됨
+group by 컬럼의 해시값으로 집계 항목 갱신
+
+
+#### (4) sort unique
+
+- Unnesting된 서브 쿼리가 M쪽 집합이거나 1쪽 집합이더라도 Unique 인덱스가 없으면,
+메인 쿼리와 조인하기 전에 중복 레코드를 제거해야함.
+
+- 만약 PK/Unique Constraint/Unique Index 속성이 있다면 Sort Unique 오퍼레이션은 생략됨
+
+- 집합 연산자(union, minus, intersect)를 사용할 때도 위 실행계획이 나타남
+
+- Distinct 연산에는 `Hash Unique` 방식이 등장 (order by 없을 때)
+
+
+#### (5) Sort join
+소트 머지 조인 수행 시 등장
+
+#### (6) window sort
+윈도우 함수 사용 시 등장
+
+이로써 소트를 발생시키는 오퍼레이션 종류를 확인하였음.
+
+## 5.2 소트가 발생하지 않도록 SQL 작성
+
+### 5.2.1 Union vs Union ALL
+
+중복제거연산이 필요한 게 아니라면 union all을 사용해야 sort unique 생략됨
+
+
+```sql
+-- 아래 쿼리는 중복 가능성 있음
+select ~
+from pay
+where paydate = 20180316
+UNION ---------------------
+select ~
+from order
+where orderdate = 20180316
+
+
+-- 아래와 같이 수정 가능
+select ~
+from pay
+where paydate = 20180316
+UNION ALL -----------------
+select ~
+from order
+where orderdate = 20180316
+	and paydate != 20180316
+    
+    
+-- paydate가 nullable이면
+select ~
+from pay
+where paydate = 20180316
+UNION ALL -----------------
+select ~
+from order
+where orderdate = 20180316
+	and (paydate != 20180316 or paydate is null)
+    -- 혹은 lnnvl(paydate = 20180316)
+```
+
+### 5.2.2 Exists 활용
+
+- `distinct`는 전체 데이터를 읽고 중복을 비교해야해서 부하가 심함
+  - `exists`문으로 대체할 수 있다.
+
+→ 347p에서 바뀌는 쿼리 확인
+
+- exists문은 1. 조인이 아니고, 2. 조건이 맞으면 다음 메인쿼리로 진행하기 때문에 중복데이터가 없다.
+(단 exists문에 사용된 c의 정보를 출력하지 못함)
+
+
+- `minus` 연산자는 `not exists`문으로 대체할 수 있다.
+
+
+### 5.2.3 조인 방식 변경
+
+인덱스가 적절히 있어도 hash join으로 진행되버리면 소트연산 생략 불가
+→ 인덱스를 통해 NL조인 유도 `/*+ leading(t1) use_nl(t2)*/`
+
+order by에 조인 컬럼으로 기술돼있으면 `use_merge(t2)`, 소트 머지 조인에서도 소트 생략 가능
+
+> 250219(수) 317p ~ 349p
+
+## 5.3 인덱스르 이용한 소트 연산 생략
+
+> 250220(목) 350p ~ p
+
