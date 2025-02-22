@@ -671,7 +671,8 @@ SORT (AGGREGATE)
 
 #### Top N 쿼리 이용해 최소/최대 구하기
 
-- order by target_col 한 후 인라인뷰로 만들고, rownum <= 1 이라 기술하면 min/max 구할 수 있음
+- 위의 쿼리에서 4번인덱스를 사용할 때
+- `order by sal`를 추가한 후 인라인뷰로 만들고, rownum <= 1 이라 기술하면 min/max 구할 수 있음. (stopkey 조건 작동)
 
 
 ### 5.3.4 이력 조회
@@ -701,6 +702,7 @@ where pcategory = 100
 
 #### INDEX_DESC 힌트 활용
 
+조건이 많을 때 쿼리가 복잡하지 않으면서도 적당한 성능을 얻는 방법
 370p 쿼리 확인하기.
 서브쿼리 중첩이 아닌 여러 컬럼을 문자열 결합(||)한 후 데이터를 정렬시키고
 substring으로 필요한 컬럼을 추출해서 사용.
@@ -714,12 +716,12 @@ substring으로 필요한 컬럼을 추출해서 사용.
 
 372p 쿼리 확인하기.
 
-조인조건 푸쉬다운 = Predicate Pushing = `/*+ push_pred */ `
-이 작동한 것
+Predicate Pushing, 쿼리 변환이 작동한 것
 
 
 - row limiting절
   - 인덱스로 소트를 생략할 수 있는 쿼리에 `window 함수(row_number() over())` = `Fetch 0 rows only` 구문을 사용하면 안된다.
+    - row_number() over() 'no'절과 no=1 절을 사용하도록 변환되기 때문
 
 
 - 페이징 처리
@@ -747,7 +749,8 @@ substring으로 필요한 컬럼을 추출해서 사용.
 
 ### 5.3.5 Sort Group by 생략
 
-그룹핑 연산에 인덱스를 이용할 수 있다.
+- 그룹핑 연산에 인덱스를 이용할 수 있다.
+- group by에 명시된 컬럼이 선두인 인덱스를 사용하면 됨
 
 실행계획에 `Sort Group By Nosort` 등장
 
@@ -774,8 +777,8 @@ Top N 쿼리를 쓸 경우 소트 에어리어는 훨씬 적게 사용하기 때
 
 384p의 Top N 쿼리에서 rownum절을 제거하고, 밖의 쿼리에서 between절로 합쳐서 수행하면 
 
-실행계획에서 `Stopkey`가 사라지고
-메모리를 넘어서 DISK까지 이용해야하기 때문에 cr(논리IO)는 같지만 pr, pw가 발생한다.
+실행계획에서 `Stopkey`가 사라짐 (중단불가)
+소트 시 메모리를 넘어서 DISK까지 이용해야하기 때문에 cr(논리IO)는 같지만 pr, pw가 발생한다.
 
 
 ### 5.4.4 분석함수에서의 Top N 소트
@@ -788,4 +791,203 @@ row_number(), rank()는 Top N 소트 알고리즘이 작동하기때문에 max()
 
 ## 6.1 기본 DML 튜닝
 
-> 250220(목) 393p ~ p
+### 6.1.1 DML 성능에 영향을 미치는 요소
+
+1) 인덱스
+2) 무결성 제약
+3) 조건절
+4) 서브 쿼리
+5) Redo 로깅, Undo 로깅
+6) Lock
+7) 커밋
+
+#### 1) 인덱스와 DML 성능
+
+- 데이터 INSERT 시
+  - 테이블에 입력; Freelist를 통해 블록 할당
+  - 인덱스에 입력; 인덱스 트리를 통해 블록 탐색
+- 데이터 DELETE 시
+  - 테이블 작업
+  - 인덱스 작업
+
+→ 한 로우를 삽입/삭제했을 때 해당하는 '모든 인덱스'도 삽입/수정을 해주어야하기 때문에 DML은 부하가 심함
+
+- 데이터 UPDATE시
+  - 테이블 작업
+  - 기존 인덱스 삭제 후 변경된 값으로 변경된 위치에 삽입
+
+인덱스 수는 DML에 부하를 줌
+
+#### 2) 무결성 제약과 DML 성능
+
+- 개체 무결성
+- 참조 무결성
+- 도메인 무결성
+- 사용자 정의 무결성
+
+PK와 FK는 Check, Not Null 제약보다 성능에 영향이 큼
+
+
+#### 3) 조건절과 DML성능
+
+DML의 조건절은 인덱스 튜닝 방법을 그대로 적용할 수 있다.
+
+
+#### 4) 서브쿼리와 DML성능
+
+조인 튜닝방법을 적용할 수 있다. 특히 4.4절
+
+#### 5) Redo로깅과 DML성능
+
+DML수행시마다 Redo로그가 기록되기 때문에 성능에 영향이 있음
+
+- Redo 로그 용도
+  - Database 복구 (Media Fail - Archived Redo Log 이용하여 Media Recovery)
+  - Cache 복구 (인스턴스 복구의 roll forward 단계)
+  - Fast Commit : 디스크에 데이터를 반영할 때 redo로그에 기록된 정보로 Batch 방식으로 일괄 처리하는 방법(DBWR, Checkpoint 이용)
+
+
+#### 6) Undo 로깅과 DML 성능
+
+Undo도 redo와 마찬가지로 DML수행 시마다 기록되기 때문에 성능 영향 있음
+
+- Undo 로그 용도
+  - 트랜잭션 롤백
+  - 트랜잭션 리커버리 (인스턴스 복구의 rollback 단계)
+  - Read Consistency
+    - 현재 상태에서 undo로그를 적용해 데이터를 호출한 시점의 데이터를 읽는다.
+
+
+- MVCC모델
+  - Current 모드 : 블록 상태 그대로를 읽음
+  - Consistent mode : undo 로그 적용하여 읽음
+
+
+- DML문은 Consistent 모드로 데이터를 찾고, Current 모드로 데이터를 변경한다.
+  - 과거데이터에 변경을 적용할 순 없기 때문
+
+
+#### 7) Lock과 DML성능
+
+매우 크고 직접적인 영향을 가짐
+적당한 레벨의 락, 적당한 길이로 사용해야함
+데이터 품질과 성능은 trade-off 관계
+
+
+#### 8) 커밋과 DML성능
+
+1. DB 버퍼캐시
+   - 버퍼캐시를 이용해 서버프로세스는 데이터를 읽고 씀
+   
+2. Redo 로그버퍼
+Redo log가 append 방식으로 관리된다 해도 느림
+따라서 Redo 로그버퍼를 두어 Redo로그에 기록되기 전에 기록한다.
+
+LGWR이 기록된 로그버퍼를 Redo 로그에 기록한다.
+
+
+3. 트랜잭션 데이터 저장 과정
+
+a) Redo 로그버퍼에 기록
+b) 버퍼블록에서 레코드 변경
+c) 커밋
+d) LGWR 프로세스가 Redo로그버퍼 → 로그파일 (Write ahead logging)
+e) DBWR 프로세스가 버퍼캐시 → 데이터 파일
+
+→ 항상 로그부터 기록함
+
+
+- log force at commit : 커밋 이전에 redo 데이터를 파일에 반드시 저장
+
+4. '커밋 = 저장버튼'
+log force at commit이라는 작동방식처럼
+commit 시 서버 프로세스는 최소 redo 로그 버퍼가 디스크에 기록되기 전까지 대기 상태로 전환된다.
+
+redo 로그버퍼의 기록은 DISK IO작업이기 때문에 '커밋'은 느린 작업이다.
+
+
+### 6.1.2 데이터베이스 Call과 성능
+
+#### 데이터베이스 Call
+
+- SQL의 세 단계 Call
+  - Parse Call; 파싱, 최적화 (캐시에서 실행계획 찾을 시 최적화는 스킵)
+  - Execute Call; 실행
+  - Fetch Call; 사용자에게 전송(select문에만 존재), 데이터가 많으면 콜이 여러번 발생
+
+
+- 발생지에 따른 Call의 종류
+  - User Call : DBMS입장에선 표현층이 아닌 비즈니스층에서 발생하는 콜
+  - Recursive Call : DBMS 내부 발생하는 콜; 데이터 딕셔너리 조회, PLSQL·트리거 조회 등
+
+Call은 성능에 영향을 줌
+
+
+#### 절차적 루프 처리
+
+recursive call로 29초 걸리던 작업이
+java program으로 수행(user call)하게 되면 218초가 걸렸다.
+
+
+#### One SQL의 중요성
+
+- One SQL 구현에 유용한 구문
+  - Insert Into Select
+  - 수정가능 조인 뷰
+  - Merge 뷰
+
+
+### 6.1.3 Array Processing 활용
+Array Processing :배열 처리 = 묶음 처리
+
+- PLSQL에서의 Array Processing :`fetch c bulk collect`
+- JAVA에서의 Array Processing  : PreparedStatement에 FetchSize를 설정하여 수행
+
+Array Processing 방법이 훨씬 빠르다
+
+
+### 6.1.4 인덱스 및 제약 해제를 통한 대량 DML 튜닝
+
+단지 성능을 위해 OLTP시스템에서 인덱스, 제약을 해제할 순 없다.
+
+단 배치시스템에선 대량 데이터 적재 시 이 기능들을 잠시 해제하여 성능효과를 얻을 수 있다.
+
+- 데이터 1000만건 입력
+  - PK 제약 설정, Unique 인덱스(자동), 일반 인덱스 생성 : 1분 19초
+  - PK 제약 해제, Unique 인덱스 유지, 일반 인덱스 제거 : 5.8초
+    - PK 제약 설정(novalidate) : 6.7초
+    - 일반 인덱스 재생성 : 8.2초
+    → 총합 20.7초
+
+
+### 6.1.5 수정가능 조인 뷰
+
+#### 전통적인 방식의 UPDATE
+
+- 전통적인 방식의 UPDATE문으로는 조인이 필요한 쿼리의 비효율을 완전히 없앨 수 없다.
+
+#### 수정가능 조인 뷰
+
+- 수정가능 조인 뷰 : 여러 테이블이 조인된 뷰에 수정을 할 수 있는 경우(12c이상)
+
+- 수정가능 조인 뷰를 수정할 때, 1쪽 집합을 수정하면 오류 발생 (non key-preserved table)
+  - ex) `d.deptno = e.deptno`로 조인하고(d는 1쪽, e는 m쪽)
+  `set d.loc = 'CHICAGO' where e.job='MANAGER'`로 d테이블의 컬럼을 수정하면
+  실제로는 다른 job을 가진 사원의 소재지도 바뀐다. (d.loc이 바뀌므로)
+  
+- 1쪽 집합에 PK제약/Unique 인덱스를 사용해야 정상적으로 수정이 가능하다.
+
+#### 키 보존 테이블이란?
+
+- 뷰에 자신의 rowid를 제공하는 테이블
+
+#### ora-01779 제약 회피
+
+- 키가 보존되는데도 에러가 발생하는 경우에는 `Merge`문으로 바꿔줘야한다.(일부 구버전)
+- Unique 인덱스가 무조건 존재해야 수정가능조인뷰를 활용할 수 있다.
+
+> 250222(토) 393p ~ 429p
+
+### 6.1.6 MERGE 문 활용
+
+> 250222(토) 430p ~ p
