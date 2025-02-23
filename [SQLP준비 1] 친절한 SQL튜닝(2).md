@@ -810,13 +810,13 @@ row_number(), rank()는 Top N 소트 알고리즘이 작동하기때문에 max()
   - 테이블 작업
   - 인덱스 작업
 
-→ 한 로우를 삽입/삭제했을 때 해당하는 '모든 인덱스'도 삽입/수정을 해주어야하기 때문에 DML은 부하가 심함
+→ 한 로우를 삽입/삭제했을 때 해당하는 **'모든 인덱스'**도 삽입/수정을 해주어야하기 때문에 DML은 부하가 심함
 
 - 데이터 UPDATE시
   - 테이블 작업
   - 기존 인덱스 삭제 후 변경된 값으로 변경된 위치에 삽입
 
-인덱스 수는 DML에 부하를 줌
+→ 인덱스 수는 DML에 부하를 줌
 
 #### 2) 무결성 제약과 DML 성능
 
@@ -940,7 +940,7 @@ java program으로 수행(user call)하게 되면 218초가 걸렸다.
 ### 6.1.3 Array Processing 활용
 Array Processing :배열 처리 = 묶음 처리
 
-- PLSQL에서의 Array Processing :`fetch c bulk collect`
+- PLSQL에서의 Array Processing : `fetch c bulk collect`
 - JAVA에서의 Array Processing  : PreparedStatement에 FetchSize를 설정하여 수행
 
 Array Processing 방법이 훨씬 빠르다
@@ -990,4 +990,176 @@ Array Processing 방법이 훨씬 빠르다
 
 ### 6.1.6 MERGE 문 활용
 
-> 250222(토) 430p ~ p
+- DW의 데이터 동기화 작업 - 기간계 시스템의 신규 데이터 → DW에 반영
+  1. 신규데이터를 별도 테이블로 구축
+  `create table tmp_c as select ~ from c where 변경일자 < sysdate and 변경일자 >= sysdate - 1`
+  
+  2. 별도 구축한 테이블을 전송
+  
+  3. 적재
+   ```sql
+   merge into c using tmp_c t on (c.cust_id = t.cust_id)
+   when matched then update
+     set c.cust_nm = t.cust_nm, c.email = t.email, ...
+   when not matched then insert
+     (cust_id, cust_nm, email, ... ) values
+     (c.cust_id, c.cust_nm, c.email, ...)
+   ;
+   ```
+   → upsert라고도 부름
+   
+#### Optional Clauses
+
+merge문을 활용해서 수정가능 조인 뷰 기능을 대체할 수 있다.
+→ 431p 쿼리 참조
+
+#### Conditional Operations
+
+merge 문 사용 시 on 절 외에도 where절로 조건을 걸 수 있다.
+
+#### DELETE Clause
+
+update, insert 외에도 delete도 가능하다.
+
+- 기억할 점
+  - 432p의 쿼리처럼 여러 작업이 수행될 때, update후의 결과가 delete조건에 일치한다면 삭제된다.
+  - 조인에 성공한 데이터만 적용됨
+  
+#### Merge Into 활용 예
+
+
+## 6.2 Direct Path IO 활용
+
+- OLTP : 버퍼캐시가 성능 향상에 도움
+- OLAP, DW, batch프로그램 : 버퍼캐시를 경유하는 IO가 오히려 비효율적일 수 있음. 
+→ Direct Path IO를 활용
+
+### 6.2.1 Direct Path IO
+
+- Direct Path IO가 작동하는 경우
+  1. 병렬 쿼리 Full Scan
+     - `/*+ full(t) parallel(t 4) */`
+     - `/*+ index_ffs(t t_idx01) parallel_index(t t_idx01 4) */`
+     - order by, group by, 해시 조인, 소트 머지 조인 등을 처리할 때는 지정한 병렬도보다 두배로 사용됨
+  2. 병렬 DML
+  3. Direct Path Insert 수행
+  4. Temp 세그먼트 블록을 R/W
+  5. export를 direct 옵션으로 할 때
+  6. nocache 옵션이 지정된 LOB 컬럼을 읽을 때
+
+### 6.2.2 Direct Path Insert
+
+- Insert 과정이 느린 이유
+  1. Freelist 탐색
+     - `Freelist` : HWM아래쪽에 여유공간이 있는 블록 목록
+  2. Freelist에서 찾은 블록을 버퍼캐시에서 탐색
+  3. 찾은 블록이 버퍼캐시에 없으면 버퍼캐시에 적재
+  4. Undo 세그먼트 기록
+  5. Redo 세그먼트 기록
+
+
+- Direct Path Insert 사용 방법
+  - Insert as select 문에 append 힌트 사용
+  - Insert문에 parallel 힌트 사용
+  - SQL Loader를 direct 옵션 체크하여 사용
+  - Create table as select문 사용
+
+
+- Direct PAth Insert가 빠른 이유
+  1. Freelist를 참조하지 않고 HWM 밑에 순차 데이터 입력
+  2. 버퍼캐시 탐색/적재 과정 없이 데이터 파일에 직접 기록
+  3. Undo 로깅 없음
+  4. Redo 로깅 최소화 가능
+     - 전체 비활성화는 불가능. 데이터 딕셔너리 변경사항만 로깅 가능
+
+
+- PL/SQL의 Array Processing을 Direct PATH IO방식으로 활용
+  - `/*+ append_values */` 힌트 사용
+
+
+- Direct Path Insert 사용 시 주의점
+  1. TM Lock 설정됨 (테이블 DML 락)
+  2. HWM 아래부터 입력하기 때문에 Freelist를 이용한 블록들의 여유공간 활용 불가
+  
+
+### 6.2.3 병렬 DML
+
+- 허용 구문
+  - `alter session enable parallel dml;`
+
+
+- 병렬 DML을 허용하지 않고 힌트를 기술하면, 찾는 것만 병렬로 수행하기 때문에 병목이 생김
+- 병렬 DML이 작동하지 않을 때를 대비해 Direct Path IO라도 사용하도록 `/*+ append */`힌트를 같이 사용하는 것이 좋음
+
+
+- 병렬 DML도 Exclusive TM Lock이 걸리기 때문에 주간에는 사용이 바람직하지 않음
+
+
+#### 병렬DML이 잘 작동하는지 확인하는 방법
+
+- 작동 시 실행계획에 PX Coordinator 하위목록으로 DML이 표시됨
+- PX Coordinator 상위에 DML이 표시되면 QC가 처리함
+  - 병렬방식이 아닌 Direct Path IO로 수행됨
+  - Query Coordinator = SQL중 처음 실행된 프로세스
+
+
+## 6.3 파티션을 활용한 DML튜닝
+
+### 6.3.1 테이블 파티션
+
+#### Range 파티션
+
+#### Hash 파티션
+
+#### List 파티션
+
+
+### 6.3.2 인덱스 파티션
+
+- 테이블
+  - 파티션 테이블
+  - 비파티션 테이블
+
+
+- 인덱스
+  - 파티션 인덱스
+    - 로컬 파티션 인덱스
+    : 테이블 파티션과 인덱스 파티션이 1:1 대응 관계(오라클이 자동 관리)
+    `create index order_idx01 on order ( order_date, order_amount) LOCAL`
+
+    - 글로벌 파티션 인덱스
+    : 그 외 관리방법 (수동지정)
+    `create index order_idx01 on order ( order_date, order_amount) GLOBAL`
+    
+  - 비파티션 인덱스
+
+#### Prefixed vs. Nonprefixed
+- 인덱스 파티션 키 컬럼이 인덱스 선두 컬럼인지에 따른 구분
+  - Prefixed : 선두에 위치
+  - Nonprefixed : 인덱스 파티션 키 컬럼이 선두 X거나 아예 인덱스에 없음
+
+
+#### 중요한 인덱스 파티션 제약
+
+- Unique 인덱스를 파티셔닝하려면 파티션 키는 인덱스 구성에 포함되어야한다.
+→ ex) PK의 인덱스를 파티셔닝 할 때 파티션 키는 PK 컬럼에 포함돼야함
+  - 인덱스가 더 있는 경우 모든 인덱스가 로컬 파티션 인덱스여야 한다.
+
+
+- 이 제약으로 인해 PK를 로컬 파티셔닝 하지 못하면
+  - ex) 테이블 파티션 키가 인덱스 구성 컬럼이 아닌 경우
+  → pk (주문번호), 인덱스 파티션키(주문번호), 테이블 파티션키(주문일자) 인 경우 
+- 파티션 구조 변경 작업 시 PK가 Unusable 상태로 바뀌고, Rebuild시 서비스가 중단되어야함.
+- 따라서 서비스 중단 없이 파티션 구조를 변경할 수 있으려면 
+**'모든 인덱스가 로컬 파티션 인덱스'**여야함
+
+
+- 위 내용에 따른 tip 
+: 인덱스를 설계할 때, PK를 로컬 파티션 인덱스로 구성할 수 있도록 파티션 대상 컬럼(대량 데이터 수정 기준컬럼)을 예상할 수 있어야 한다. 
+
+
+> 250223(일) 430p ~ 456p
+
+### 6.3.3 파티션을 활용한 대량 UPDATE튜닝
+
+> 250224(월) 456p ~ p
