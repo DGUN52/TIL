@@ -988,13 +988,17 @@ Array Processing 방법이 훨씬 빠르다
 
 > 250222(토) 393p ~ 429p
 
+
+
+
+
 ### 6.1.6 MERGE 문 활용
 
-- DW의 데이터 동기화 작업 - 기간계 시스템의 신규 데이터 → DW에 반영
+- DW의 데이터 동기화 작업 : 기간계 시스템의 신규 데이터 → DW에 반영
   1. 신규데이터를 별도 테이블로 구축
   `create table tmp_c as select ~ from c where 변경일자 < sysdate and 변경일자 >= sysdate - 1`
   
-  2. 별도 구축한 테이블을 전송
+  2. 별도 구축한 테이블을 시스템 간 전송
   
   3. 적재
    ```sql
@@ -1011,7 +1015,7 @@ Array Processing 방법이 훨씬 빠르다
 #### Optional Clauses
 
 merge문을 활용해서 수정가능 조인 뷰 기능을 대체할 수 있다.
-→ 431p 쿼리 참조
+→ 431p 쿼리 참조; merge문에서 매칭하는 절을 서브쿼리로 사용
 
 #### Conditional Operations
 
@@ -1026,6 +1030,8 @@ update, insert 외에도 delete도 가능하다.
   - 조인에 성공한 데이터만 적용됨
   
 #### Merge Into 활용 예
+
+merge문은 한번만 수행되는 효율적인 쿼리작성이 가능하다.
 
 
 ## 6.2 Direct Path IO 활용
@@ -1059,18 +1065,18 @@ update, insert 외에도 delete도 가능하다.
 
 
 - Direct Path Insert 사용 방법
-  - Insert as select 문에 append 힌트 사용
+  - Insert select 문에 append 힌트 사용
   - Insert문에 parallel 힌트 사용
   - SQL Loader를 direct 옵션 체크하여 사용
   - Create table as select문 사용
 
 
-- Direct PAth Insert가 빠른 이유
+- Direct Path Insert가 빠른 이유
   1. Freelist를 참조하지 않고 HWM 밑에 순차 데이터 입력
   2. 버퍼캐시 탐색/적재 과정 없이 데이터 파일에 직접 기록
   3. Undo 로깅 없음
   4. Redo 로깅 최소화 가능
-     - 전체 비활성화는 불가능. 데이터 딕셔너리 변경사항만 로깅 가능
+     - 전체 비활성화는 불가능. 데이터 딕셔너리 변경사항만 로깅하도록 설정 가능
 
 
 - PL/SQL의 Array Processing을 Direct PATH IO방식으로 활용
@@ -1142,8 +1148,8 @@ update, insert 외에도 delete도 가능하다.
 #### 중요한 인덱스 파티션 제약
 
 - Unique 인덱스를 파티셔닝하려면 파티션 키는 인덱스 구성에 포함되어야한다.
-→ ex) PK의 인덱스를 파티셔닝 할 때 파티션 키는 PK 컬럼에 포함돼야함
-  - 인덱스가 더 있는 경우 모든 인덱스가 로컬 파티션 인덱스여야 한다.
+→ ex) PK의 인덱스를 파티셔닝 할 때 파티션 키는 PK 컬럼에 속해야함
+  - 인덱스가 여러개인 경우 모든 인덱스가 로컬 파티션 인덱스여야 한다.
 
 
 - 이 제약으로 인해 PK를 로컬 파티셔닝 하지 못하면
@@ -1160,6 +1166,222 @@ update, insert 외에도 delete도 가능하다.
 
 > 250223(일) 430p ~ 456p
 
+
+
+
+
 ### 6.3.3 파티션을 활용한 대량 UPDATE튜닝
 
-> 250224(월) 456p ~ p
+대용량 UPDATE를 수행할 때, 일반적인 손익분기점으로 여기는 5%이상의 데이터가 수정대상이라면 Index를 Drop해놓고 DML을 수행한 후 인덱스를 Rebuild하는 방식이 많이 사용된다.
+
+단 10억건에 이르는 초대용량 테이블이라면 인덱스를 Drop, Rebuild하는 과정에 큰 부담이 따르기 때문에 인덱스를 놔둔 체로 작업하는 것이 일반적
+
+
+#### 파티션 Exchange를 이용한 대량 데이터 변경
+
+1. 임시테이블 생성(가능한 nologging)
+```sql
+create table tmp
+nologging
+as
+select * from c where false
+;
+```
+
+2. c테이블을 통해 insert 하면서 필요한 DML작업 수행
+```sql
+insert /*+ append */ into tmp
+select c_col1, c_col2, c_col3, ...
+	, (case when c_col4 <> 'abc' then 'abc' else c_col4 end) c_col4 -- col4 수정
+from c
+where c_time < '20150101'
+```
+
+3. tmp 테이블에 원본과 동일하게 인덱스 생성 (가능한 nologging)
+`create index tmp_pk on tmp ( ~ ) nologging;`
+`create index tmp_idx01 on (col1, col2) nologging;`
+
+4. 파티션 exchange
+```sql
+alter table c
+exchange partition p201412 with table tmp
+icluding indexes without validation
+;
+```
+
+5. tmp 드랍
+`drop table tmp;`
+
+6. logging 다시 on
+`alter table c modify partition p201412 logging;`
+`alter index c_pk modify partition p201412 logging;`
+`alter index c_idx01 modify partition p201412 logging;`
+
+
+### 6.3.4 파티션을 활용한 대량 DELETE 튜닝
+
+- DELETE가 느린 이유; DELETE의 절차
+  1. 테이블 레코드 삭제
+  2. 삭제에 대한 undo logging
+  3. 삭제에 대한 redo logging
+  4. 인덱스 레코드 삭제
+  5. undo logging
+  6. redo logging
+  7. 2, 5q번에 대한 redo logging
+
+
+#### 파티션 Drop을 이용한 대량 데이터 삭제
+
+삭제 대상과 파티션이 맞아떨어진다면 파티션 제거로 데이터를 삭제할 수 있다.
+
+`alter table c drop partition p201412`
+`alter table c drop aprtition for ('20140201'); → 값을 이용한 파티션 지정, 제거`
+
+
+#### 파티션 Truncate를 이용한 대량 데이터 삭제
+
+조건절에 속하는 삭제 대상의 비중이 높다면, 
+1. 남길 데이터를 임시테이블에 백업하고 
+2. 제거 후 
+3. 재입력 하는 방식이 빠르다.
+
+
+- 서비스 중단 없이 파티션을 Drop/Truncate할 수 있는 조건
+  1. 파티션 키와 커팅 기준 컬럼이 정확히 일치
+  ex) 파티션 키 = 커팅 기준 컬럼 = '신청 일자'
+  2. 파티션 단위와 커팅 주기가 일치해야함
+  ex) 월 단위 파티션을 월 단위로 커팅
+  3. 모든 인덱스가 로컬 파티션 인덱스여야함
+  ex) 파티션 키 = '신청일자', PK = '신청일자 + 신청순번'
+
+
+### 6.3.5 파티션을 활용한 대량 INSERT 튜닝
+
+#### 비파티션 테이블일 때
+- 인덱스 Unusable, DML 수행 후 인덱스를 재생성 하는 것이 더 빠를 수 있다.
+  1. `alter table target_t nologging;`
+  2. `alter index target_t_idx01 unusable;`
+  
+  3. `insert /*+ append */ into target_t select * from source_t`
+  
+  4. `alter index target_t_idx01 rebuild nologging;`
+  
+  5. `alter table target_t logging;`
+  `alter index target_t_idx01 logging;`
+
+
+#### 파티션 테이블일 때
+` alter table target_t modify partition ~ nologging;`
+`alter index target_x01 modify partition ~ unusable;`
+
+`insert /*+ append */ into target_t select * from source_t where dt between partitonKeyStart and End`
+
+` alter index target_t_idx01 rebuild partition ~ nologging;`
+
+` alter table target_t modify partition ~ logging;`
+`alter index target_x01 modify partition ~ logging;`
+
+> 250224(월) 456p ~ 465p
+
+
+
+
+## 6.4 Lock과 트랜잭션 동시성 제어
+
+- Lock, 동시성 제어, 식별자와 채번에 관한 장
+
+
+### 6.4.1 오라클 Lock
+
+- 래치 : SGA에 공유된 각종 자료구조를 보호하기 위해 사용
+- 라이브러리 캐시 Lock/Pin : 라이브러리 캐시에 공유된 SQL 커서, PL/SQL 프로그램을 보호하기 위해 사용
+- 버퍼 Lock : 버퍼 블록에 대한 액세스 직렬화를 위해 사용
+
+
+- DML Lock : 테이블 Lock, 로우 Lock
+
+
+#### DML 로우row Lock
+
+- 여러 트랜잭션이 한 로우를 변경하는 것을 방지
+- UPDATE, DELETE에는 일반적으로 배타적 락 적용
+- INSERT에 대한 로우 Lock 경합은 Unique 인덱스가 있을 때만 발생
+  - 같은 값을 입력하려는 경우, 선행 트랜잭션의 커밋/롤백 여부에 따라 후행 트랜잭션의 성공여부 결정
+- 오라클은 SELECT에 락이 없음 (MVCC사용)
+  - MVCC가 아닌 DBMS에선 공유 락 사용 (SELECT끼린 공유, DML과는 경합)
+
+
+- Lock이 길게 지속되지 않게 튜닝 하는 것도 SQL튜닝의 일부
+
+
+#### DML 테이블 Lock
+
+- 테이블 Lock을 DM Lock 이라고도 함
+- Row Lock의 종류 469p
+  - Null
+  - RS
+  - RX
+  - S
+  - SRX
+  - X
+
+
+- 리소스가 사용 중일 때, select for update문에선 세가지 경우의수를 모두 선택할 수 있다.
+  1. Lock해제를 기다림 (select * from t for update)
+  2. 일정 시간만 기다림 (select * from t for update wait 3)
+  3. 바로 작업을 포기 (select * from t for update nowait)
+
+
+#### Lock을 푸는 열쇠, 커밋
+
+- 블로킹 : 락 때문에 후행 트랜잭션이 멈춰있는 상태
+- 교착상태 : Lock이 설정된 리소스에 또 Lock을 설정하려고 하는 상황
+
+
+- 오라클에서 교착상태가 발생했을 때, 먼저 락을 감지한 트랜잭션은 문장수준의 롤백을 진행한다.
+그 후 블로킹 상태를 해소하기 위해 커밋/롤백을 해야한다. 프로그램에선 예외처리를 해주어야함
+
+
+- 트랜잭션이 길어지면 undo 세그먼트 고갈/경합을 유발할 수 있다.
+- 커밋을 너무 자주하면 LGWR가 로그 버퍼를 비우는동안 동기 방식으로 기다리는 시간이 늘어남
+→ 비동기식 커밋, 배치 커밋 활용 가능
+
+```sql
+-- IMMEDIATE : COMMIT마다 LGWR이 로그 버퍼를 파일에 기록
+-- BATCH : LGWR이 커밋을 모아서 처리
+-- WAIT/NOWAIT : LGWR의 로그버퍼 처리를 기다리는지 여부
+COMMIT WRITE IMMEDIATE WAIT;
+COMMIT WRITE IMMEDIATE NOWAIT;
+COMMIT WRITE BATCH WAIT;
+COMMIT WRITE BATCH NOWAIT;
+```
+
+#### 비관적 동시성 제어
+
+```sql
+select ~
+from ~
+where ~
+for update wait/nowait/skip locked
+	of t.colt_1 -- 로우에 락 걸기
+;
+```
+
+#### 낙관적 동시성 제어
+
+#### 동시성 제어 없는 낙관적 프로그래밍
+
+#### 데이터 품질과 동시성 향상을 위한 제언
+
+성능보다 중요한 것은 데이터 품질
+
+sql튜닝으로 성능을 올린 다음에 Lock을 고민하는 것이 바람직하다. (성능이 오르면 Lock도 짧아지기 때문)
+
+> 250225(화) 466p ~ 479p
+
+
+
+
+### 6.4.3 채번 방식에 따른 INSERT 성능 비교
+
+> 250226(수) 480p ~ p
