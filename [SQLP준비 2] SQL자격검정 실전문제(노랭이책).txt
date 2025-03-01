@@ -33,3 +33,45 @@
   - 오리지날인지 대체됐는지 → 본질/인조식별자
 
 > 2025 02 25
+
+
+
+
+- 비절차적 데이터 조작어 : SQL. (절차적 데이터 조작어 : c, java ...)
+
+
+- 컬럼명 변경 문법 (ANSI 표준)
+  - `rename stadium to stadium_jsv;`
+
+
+- FK 제약 문법
+  - on delete
+    - cascade
+    - set null
+    - set default
+    - restrict
+    - no action
+  - on insert
+    - automatic : PK 없을 시 자동생성
+    - set null
+    - set default
+    - Dependant : PK가 있을 때만 입력 가능
+    - no action
+  
+  
+  - drop과 truncate는 DDL로 auto commit된다. (truncate는 일부 dml성격)
+  
+  
+  - 격리성 단계
+    - read uncommitted
+      - dirty read 발생
+      - non repeatable read 발생
+      - phantom read(삽입 이상) 발생
+    - read committed
+      - dirty read 방지
+    - repeatable read
+      - non repeatable read까지 방지
+    - serializable
+      - phantom read까지 방지
+      
+> 2025 03 01

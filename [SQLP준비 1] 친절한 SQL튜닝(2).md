@@ -1497,4 +1497,120 @@ sql튜닝으로 성능을 올린 다음에 Lock을 고민하는 것이 바람직
 
 ## 7.1 통계정보와 비용 계산 원리
 
-> 250227(목) p ~ p
+### 7.1.1 선택도와 카디널리티
+
+- 선택도 : 전체 레코드 중 조건절에 의해 선택되는 레코드의 비율
+  - `=`검색할 때의 선택도 : 1 / NDV (distinct value)
+
+
+- 카디널리티 : 전체 레코드 중 조건절에 의해 선택되는 레코드의 갯수
+  - 총 로우 수 X 선택도 = 총 로우 수 / NDV
+
+
+옵티마이저는 카디널리티를 통해 액세스 비용을 계산해서 
+테이블 액세스 방식, 조인 순서, 조인 방식 등을 결정
+
+올바른 비용계산을 하기 위해 통계정보 수집주기, 샘플링 비율 등을 잘 정해야 한다.
+
+
+### 7.1.2 통계정보
+
+- 오브젝트 통계
+  1. 테이블 통계
+    ```sql
+    -- 수집 방법
+    begin
+    	dbms_stas.gather_table_stats('user01', 'tab1');
+    end;
+    /
+    
+    -- 확인 방법
+    select ~
+    from all_tables
+    where owner='user01'
+    and table_name = 'tab1';
+    ```
+  2. 인덱스 통계
+    ```sql
+    -- 인덱스 통계만 수집
+    begin
+    	dbms_stats.gather_index_stats( ownname => 'user01', indname => 'tab1_idx01');
+    end;
+    /
+    
+    -- 테이블 통계와 같이 수집(cascade)
+    begin
+    	dbms_stats.gather_table_stats('user01', 'tab01', cascade=>true);
+    end;
+    /
+    
+    -- 확인
+    select ~
+    from all_indexes
+    where owner = 'user01'
+    and	table_name = 'tab1'
+    and index_name = 'tab1_idx01';
+    ```
+  3. 컬럼 통계
+    - 테이블 통계를 수집할 때 같이 수집됨
+    ```sql
+    select ~
+    from all_tab_columns
+    where owner = 'user01'
+    and table_name = 'tab1'
+    and column_name = 'col1'
+    ```
+
+#### 컬럼 히스토그램
+
+데이터 분포가 고르지 않은 커럼에는 선택도 계산(1/NDV)이 적절하지 못하고,
+데이터 액세스 비용이 잘못 계산될 수 있다.
+
+이를 보완하기 위해 컬럼 히스토그램이 사용됨
+
+1. 도수분포 : 값 별 빈도수
+2. 높이균형 : 
+3. 상위도수분포 : 상위 n개 값에 대한 빈도수
+4. 하이브리드 : 도수분포와 높이균형 히스토그램의 특성 결합
+
+테이블 통계를 수집할 때 `method_opt=>` 파라미터 지정하면 히스토그램을 수집할 수 있음
+
+- 시스템 통계 : HW성능 특성
+  - CPU속도
+  - 평균 Single Block IO 속도
+  - 평균 Multi Block IO 속도
+  - 평균 Multi Block IO 개수
+  - IO서브시스템의 최대 처리량
+  - 병렬 Slave의 평균 처리량
+
+
+- 시스템 통계는 `sys.aux_stats$` 뷰에서 조회할 수 있음
+
+
+### 7.1.3 비용 계산 원리
+
+- 인덱스 키 값을 모두 `=`조건으로 검색할 때 필요한 통계 정보
+  - `BLEVEL` --인덱스 수직 탐색 비용 
+  \+ `AVG_LEAF_BLOCKS_PER_KEY` --인덱스 수평 탐색 비용
+  \+ `AVG_DATA_BLOCKS_PER_KEY` --테이블 랜덤 액세스 비용
+
+
+- 모두 `=`조건이 아닐 때
+  - `BLEVEL` --인덱스 수직 탐색 비용 
+  \+ `LEAF_BLOCKS` X 유효 인덱스 선택도  --인덱스 수평 탐색 비용
+  \+ `CLUSTERING_FACTOR` X 유효 테이블 선택도 --테이블 랜덤 액세스 비용
+
+
+
+> 250227(토) 501p ~ 510p
+
+
+
+
+## 7.2 옵티마이저에 대한 이해
+
+### 7.2.1 옵티마이저 종류
+
+
+
+> 250228(일) p ~ p
