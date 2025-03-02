@@ -75,3 +75,34 @@
       - phantom read까지 방지
       
 > 2025 03 01
+
+
+
+
+- 논리연산자의 우선순위
+  - NOT > AND > OR
+
+
+- NULL과 연산, 집계함수
+  - NULL이 포함된 연산은 모두 NULL
+    - ex) a+b+c → 셋 중 하나라도 null이면 결과는 null
+  - NULL이 포함된 집계함수 → NULL인 로우는 무시됨
+    - ex) avg()를 사용한 group by인 경우 평균의 모집단 수에서도 제외됨
+
+
+- `IFNULL`(MySQL) = `ISNULL`(SQL-Server) = `NVL`(Oracle)
+  - `NVL2(기준값, "NULL", "NOT NULL")`
+
+
+- Cartesian 곱을 만들기 위한 명시적 join 방법은 `cross join`
+
+
+- SQL Server의 EXCEPT 연산 = MINUS 연산
+
+
+
+
+> 2025 03 02. ~100p
+
+
+
