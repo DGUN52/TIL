@@ -99,10 +99,115 @@
 
 - SQL Server의 EXCEPT 연산 = MINUS 연산
 
-
-
-
 > 2025 03 02. ~100p
 
 
 
+- GROUPING(col_a)
+  - 해당 컬럼이 집계됐는지 확인하는 함수.
+  - 집계된 컬럼이 NULL로 표시될 때 GROUPING(col_a)의 결과는 1
+  ```sql
+  -- 출처 https://gent.tistory.com/386
+  SELECT job
+      , deptno
+      , SUM(sal) 
+      , GROUPING(job)
+      , GROUPING(deptno)
+  FROM emp
+  WHERE job IN ('ANALYST', 'MANAGER')
+  GROUP BY ROLLUP(job, deptno)
+  ```
+
+
+- GROUPING_ID(col_a, col_b, ...)
+  - 여러 컬럼이 집계됐는지에 대한 판단 가능
+  - col_a, col_b가 함수에 사용되고, 집계돼었을 때 3 반환
+  → 이진수처럼 계산하여 리턴
+
+
+- ROLLUP(region, product) : 단계별 소계 생성
+  1. group by (region, product) `상세`
+  2. group by (region) `소계`
+  3. group by () `합계`
+  ```sql
+  SELECT region, product, SUM(amount) AS total
+  FROM sales
+  GROUP BY ROLLUP(region, product);
+  ```
+  - ![](https://velog.velcdn.com/images/deaf52/post/edff8c04-de33-4134-ba43-8b87e639125c/image.png)
+
+
+- CUBE(region, product) : 가능한 모든 조합 생성
+  1. group by (region, product)
+  2. group by (region)
+  3. group by (product)
+  4. group by ()
+  ```sql
+  SELECT region, product, SUM(amount) AS total
+  FROM sales
+  GROUP BY CUBE(region, product);
+  ```
+  - ![](https://velog.velcdn.com/images/deaf52/post/c3e0ebbb-f9b3-4bd3-a53f-3fc410dba096/image.png)
+
+
+- GROUPING_SETS( (region, product), (region), (product), () )
+: 지정한대로 조합 수행
+  - 위와 같이 수행하면 cube(region, product)와 동일
+
+
+- PL/SQL에서 동적SQL / DDL을 수행할 때 `EXECUTE IMMEDIATE`를 사용하지 않으면 rollback이 가능함
+```sql
+-- 예시
+TRUNCATE TABLE DEPT; -- 롤백 가능
+EXECUTE IMMEDIATE TRUNACTE TABLE DEPT; -- 롤백 불가. 바로 실행
+```
+
+
+- clustered index : 물리적으로 모여서 정렬된 인덱스
+
+
+- anti join : 일반적인 조인과 달리 차집합에 대해 결과를 반환하는 방식 (주로 not in 절에 등장)
+
+
+- exists 절은 주로 semi join으로 실행계획에 나타난다.
+
+
+
+- log force at commit
+  - 커밋 시점에는 반드시 로깅돼있어야함
+- fast commit 
+  - 디스크에 아직 기록되지 않고 버퍼 블록에만 기록된 상태로 Redo로그를 믿고 빠르게 커밋을 완료하는 기법
+- delayed block cleanout
+  - 오라클에서 변경된 블록이 커밋 때 clean out(락 해제, 정보 기록)되지 않고 다음 접근하는 세션이 clean out 하는 기법
+
+
+- Buffer pinning
+  - 블록이 2번 이상 Call 된 경우 버퍼블록을 메모리에 저장해두는 오라클 기법
+  - 래치 획득, 해시체인 탐색등의 과정이 생략되어 빠른 접근 가능
+  - 메모리IO는 발생
+
+
+- Response time
+= service time + wait time = CPU time + Queue time
+
+
+- dynamic sql을 사용하면 애플리케이션 커서 캐싱이 작동하지 않는 경우가 있으므로 Static SQL을 지원하는 경우 그것을 쓰는 것이 바람직하다.
+
+
+- `for update`를 SQL Server에서 대체하려면
+  - from 고객 WITH (HOLDLOCK)
+  - from 고객 WITH (UPDLOCK)
+  - 그 외 키워드 : READPAST; 스킵, TABLOCK; 테이블 단위 락 설정
+
+
+- `/*+ append */` 힌트로 insert를 수행하면 Exclusive Lock이 발생한다.
+
+
+- `update`문의 TM Lock(테이블 락)은 Row-X모드; `SX`모드, 
+→ 테이블에 같은 DML은 허용되나 DDL은 허용하지 않는 목적
+
+- `update`문의 TX Lock(트랜잭션 락)은 행단위 Exclusive모드; `X`모드
+→ 같은 행에 대한 DML 방지
+
+
+> 2025 03 03. ~157p
