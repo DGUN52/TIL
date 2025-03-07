@@ -211,3 +211,26 @@ EXECUTE IMMEDIATE TRUNACTE TABLE DEPT; -- 롤백 불가. 바로 실행
 
 
 > 2025 03 03. ~157p
+
+
+
+
+- 데이터베이스 콜 : 실행계획 수립 요청, sql수행요청
+
+
+- group by를 사용한 뷰는 Merging이 자주 발생
+
+
+> 2025 03 04. ~165p
+
+
+
+
+
+- 소트 관련 실행계획의 오퍼레이션
+  - Sort Aggregate : order by가 아닌 전체 로우 집계 시 나타나는 실행계획
+  - Sort Order by : order by
+  - Sort Group by : group by
+  - Sort Unique : distinct/union
+  - Sort Join : 소트 머지 조인
+  - Window Sort : 윈도우 함수
